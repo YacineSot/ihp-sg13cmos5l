@@ -20,12 +20,12 @@
   # SG13CMOS5L PDK: CMOS-only, M1-M4-TM1 metal stack
 
  # Active layers
-  Activ = source.input("1/0")
+  Activ = source.input("1/0") | source.input("1/22") # include the active:filler with the active layer
   Activ_filler = source.input("1/22")
   Activ_nofill = source.input("1/23")
 
   # GatPoly layers
-  GatPoly = source.input("5/0")
+  GatPoly = source.input("5/0") | source.input("5/22") # include the gatpoly:filler with the gatpoly layer
   GatPoly_filler = source.input("5/22")
   GatPoly_nofill = source.input("5/23")
 
