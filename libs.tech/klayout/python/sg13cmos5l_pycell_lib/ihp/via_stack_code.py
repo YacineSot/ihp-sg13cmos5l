@@ -44,6 +44,9 @@ class via_stack(DloGen):
         specs('vn_columns', 2, 'Via_n Columns')
         specs('vn_rows', 2, 'Via_n Rows')
         specs('extra_vias', 'no', 'Add extra vias', ChoiceConstraint(['yes', 'no']))
+        specs('use_array_size', 'no', 'Via count based on array size', ChoiceConstraint(['yes', 'no']))
+        specs('vn_total_width',  '0.7u', 'Via array total width')
+        specs('vn_total_height', '0.62u', 'Via array total height')
 
     def setupParams(self, params):
         # process parameter values entered by user
@@ -53,6 +56,13 @@ class via_stack(DloGen):
         self.vn_columns = params['vn_columns']
         self.vn_rows = params['vn_rows']
         self.extra_vias = params['extra_vias'] == 'yes'
+        self.use_array_size = params['use_array_size'] == 'yes'
+        if self.use_array_size:
+            self.vn_total_width =Numeric(params['vn_total_width'])*1e6
+            self.vn_total_height = Numeric(params['vn_total_height'])*1e6  
+        else:
+            self.vn_total_width = 0
+            self.vn_total_height = 0      
     
     
     def genLayout(self):
@@ -106,6 +116,11 @@ class via_stack(DloGen):
         tv1_sep = techparams.get('TV1_b', 0.42)   # TopVia1 spacing
         tv1_enc = techparams.get('TV1_c', 0.10)   # Metal4 enclosure of TopVia1
         tm1_enc = techparams.get('TV1_d', 0.42)   # TopMetal1 enclosure of TopVia1
+        tm1_min_width = techparams.get('TM1_a', 1.64)  # Minimum width of TopMetal1 when connecting to M4 with TopVia1
+        
+        
+        # Min metal area
+        mn_metal_area = techparams.get('Mn_d', 0.144)  # Minimum metal area (if applicable)
         #*************************************************************************
         #*
         #* Device Specific Design Rule Definitions
@@ -137,7 +152,7 @@ class via_stack(DloGen):
         stack_layers = metal_layers[idx_b:idx_t+1]
         def via_count_from_size(via_size, via_sep, via_total_size, via_num):
             ret = math.floor((via_total_size + via_sep)/(via_size + via_sep)) if via_total_size > 0 else via_num
-            return max(ret -1, 1) if via_num == 0 else ret
+            return max(ret-1 if via_num == 0 else ret, 1)
 
         if vn_total_width == 0 and self.extra_vias:
             via_size = vn_size
@@ -245,6 +260,19 @@ class via_stack(DloGen):
                     box_w = max(box_w, vn_total_width/2)
                 if vn_total_height != 0:
                     box_h = max(vn_total_height/2, box_h)
+            
+            if layer == 'TopMetal1':
+                box_w = max(box_w, tm1_min_width/2)  # Ensure minimum width for TopMetal1
+                box_h = max(box_h, tm1_min_width/2)  # Ensure minimum height for TopMetal1
+                
+            area = 4*box_w*box_h
+            if area < mn_metal_area:
+                max_dim = max(box_w, box_h)*2
+                new_dim = area/max_dim/2
+                box_w = new_dim + 0.005 if box_w <= box_h else box_w
+                box_h = new_dim + 0.005 if box_h < box_w else box_h
+            box_w = GridFix(box_w)
+            box_h = GridFix(box_h)
     
             metal_box = Box(-box_w + offset_x, -box_h + offset_y, box_w + offset_x, box_h + offset_y)
             
