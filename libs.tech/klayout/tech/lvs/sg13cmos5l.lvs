@@ -178,6 +178,14 @@ PARALLEL_RES = !bool_check?($no_parallel_res)
 
 logger.info("Selected PARALLEL_RES option: #{PARALLEL_RES}")
 
+# DISABLE_TAP_EXTRACTION
+# false (default): extract ntap1/ptap1 as devices (schematic must contain matching taps).
+# true: skip ntap/ptap device extraction so taps are not required in the schematic,
+#       aligning with Magic+Netgen LVS.
+DISABLE_TAP_EXTRACTION = bool_check?($disable_tap_extraction)
+
+logger.info("Selected DISABLE_TAP_EXTRACTION option: #{DISABLE_TAP_EXTRACTION}")
+
 # === RUN MODE ===
 case $run_mode
 when 'deep'
@@ -307,6 +315,25 @@ else
   # %include rule_decks/general_derivations.lvs
 
   #==================================
+  # ----- CMOS5L STACK OVERRIDES ----
+  #==================================
+  # general_derivations.lvs defaults the inductor metals to the SG13G2
+  # TopMetal2/TopMetal1 pair. CMOS5L has no TopMetal2, so the winding sits on
+  # TopMetal1 and the underpass crossings drop to Metal4/Metal3.
+  # See SG13CMOS5L_os_layout_rules.pdf section 6.6, Fig. 6.9.
+  ind_wind      = topmetal1
+  ind_cross     = metal4.join(metal3)
+  ind_wind_con  = [topmetal1_con]
+  # Clipped by ind_drw, matching what general_derivations.lvs does for the
+  # metals G2 uses here. ind_connections.lvs connects IND:pin to each of these
+  # over the whole design, so without the clip any Metal3 or Metal4 shape
+  # crossing under two IND:pin rectangles bonds them into one net and the coil
+  # extracts shorted. G2 never sees this because both of its inductor metals
+  # already carry the exclusion; Metal3 and Metal4 do not, since on that stack
+  # they are ordinary routing.
+  ind_cross_con = [metal4_con.not(ind_drw), metal3_con.not(ind_drw)]
+
+  #==================================
   # ------ MOSFET DERIVATIONS -------
   #==================================
 
@@ -341,6 +368,9 @@ else
   #==================================
 
   # %include rule_decks/cap_derivations.lvs
+  # %include rule_decks/cap_svaricap_cmos5l.lvs
+  # %include rule_decks/cap_cmomi_derivations.lvs
+  # %include rule_decks/cap_cmomf_derivations.lvs
 
   #================================
   # ------ ESD DERIVATIONS --------
@@ -479,9 +509,62 @@ else
   else
     logger.info('SG13CMOS5L LVS flow: extraction -> alignment -> option preparation -> comparison.')
   end
+  # Some layouts come out of alignment with nothing left on the layout side, and
+  # compare then has no pair to compare and returns true, so a run that checked
+  # nothing is reported as a match. A cap_cmomi hierarchy where no net crosses a
+  # cell boundary does exactly that in deep mode; the cause is not diagnosed, see
+  # testing/README.md and issue #91. The counts taken here are what the guard
+  # after the comparison uses to tell that case apart from a real match.
+  count_devices = lambda do |target_netlist|
+    total = 0
+    target_netlist.each_circuit { |circuit| circuit.each_device { |_device| total += 1 } }
+    total
+  end
+
+  # Only what hangs off the compared top counts on the schematic side. Counting
+  # the whole file would fail any device-less top, a filler or a routing-only
+  # block, verified against a library netlist that carries other subcircuits with
+  # devices in them: those would inflate the count and the guard would fire on a
+  # run that is genuinely a match.
+  count_devices_below = lambda do |circuit, seen|
+    next 0 if circuit.nil? || seen.include?(circuit.name)
+
+    seen << circuit.name
+    total = 0
+    circuit.each_device { |_device| total += 1 }
+    circuit.each_subcircuit { |subcircuit| total += count_devices_below.call(subcircuit.circuit_ref, seen) }
+    total
+  end
+
+  schematic_top = src ? schematic.circuit_by_name(src.cell_name) : nil
+  schematic_device_count = if schematic_top
+                             count_devices_below.call(schematic_top, [])
+                           else
+                             # No schematic circuit named after the layout top, so there is
+                             # nothing to scope to. Fall back to the whole file rather than
+                             # counting zero and disarming the guard.
+                             count_devices.call(schematic)
+                           end
+
   # === Aligns the extracted netlist vs. the schematic ===
   logger.info('Starting SG13CMOS5L LVS Alignment')
   align
+
+  # Counted after align because align is the step that can empty the netlist. The
+  # number is per circuit definition, not per placement, so it is only ever used
+  # as a zero test and as context in the error below; align flattening an
+  # unmatched sub-circuit into its callers is what makes it move.
+  layout_device_count = count_devices.call(netlist)
+
+  # Checking instead that the compared top itself survived alignment was tried and
+  # rejected on both counts. It is unnecessary: a schematic whose top subcircuit
+  # does not match the layout top cell already aborts the run inside align, with
+  # "Can't find a schematic counterpart for the top cell". And it is wrong: the
+  # top circuit legitimately does not survive for a device-free block, so the
+  # check failed a routing-only layout that compares clean.
+  logger.info("Devices to compare: layout=#{layout_device_count} " \
+              "schematic=#{schematic_device_count} (schematic counted before alignment, " \
+              "both per circuit definition)")
 
   #=== NETLIST OPTIONS ===
   logger.info('Starting SG13CMOS5L LVS Simplification')
@@ -500,6 +583,21 @@ else
     logger.info('Starting SG13CMOS5L LVS Comparison in strict port mode.')
     logger.info('flag_missing_ports enabled: missing/mislabeled top-level ports are treated as errors.')
     success = compare && flag_missing_ports
+  end
+
+  # A comparison that had nothing to compare is not a match, whatever compare
+  # returned. These two checks are the only thing standing between an extraction
+  # or an alignment that silently produced nothing and a green run. Note the
+  # .lvsdb still records compare's own result, so a run failed here shows a match
+  # in the netlist browser.
+  if layout_device_count.zero? && schematic_device_count > 0
+    logger.info('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    logger.error('ERROR : The comparison had nothing to compare: the layout netlist holds no ' \
+                 "devices while the schematic top holds #{schematic_device_count}.")
+    logger.error('The device markers may be missing, or every device may sit in a sub-cell with ' \
+                 'no net crossing its boundary, which empties the extracted netlist in deep mode.')
+    logger.info('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    success = false
   end
 
   #================================================

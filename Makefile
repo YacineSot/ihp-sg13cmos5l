@@ -88,6 +88,74 @@ test-LVS-switch: env
 	@. $(VENV_RUN_COMMAND); echo "Running Klayout-LVS switch test"
 	@. $(VENV_RUN_COMMAND); cd $(KLAYOUT_LVS_TESTS) && make test-LVS-switch
 
+#=================================
+# ---- test-cap-cmomi-sweep ------
+#=================================
+
+test-cap-cmomi-sweep: env
+	@. $(VENV_RUN_COMMAND); echo "Running cap_cmomi PCell DRC+LVS sweep"
+	@. $(VENV_RUN_COMMAND); python3 libs.tech/klayout/sg13cmos5l_tests/cap_cmomi_sweep.py
+
+#=================================
+# ---- test-cap-cmomf-sweep ------
+#=================================
+
+test-cap-cmomf-sweep: env
+	@. $(VENV_RUN_COMMAND); echo "Running cap_cmomf PCell DRC+LVS sweep"
+	@. $(VENV_RUN_COMMAND); python3 libs.tech/klayout/sg13cmos5l_tests/cap_cmomf_sweep.py
+
+#=================================
+# --------- test-gnucap ----------
+#=================================
+
+# Builds the Verilog-A model plugins, then runs the Gnucap and Ngspice test
+# suites over them. Both suites diff against checked-in reference data and this
+# target propagates their exit status, so it goes red on a model regression.
+#
+# Skips rather than fails when the toolchain or PDK_ROOT is absent, so that
+# contributors working on DRC/LVS are not blocked by a missing simulator. The
+# checks are deliberately specific: the plugin build alone takes tens of minutes,
+# so anything that would make the run fail at the end is worth catching up front.
+GNUCAP_TOOLS = gnucap gnucap-mg-vams ngspice
+
+.ONESHELL:
+test-gnucap:
+	@for tool in $(GNUCAP_TOOLS); do \
+	  if ! command -v $$tool >/dev/null 2>&1; then \
+	    echo "Skipping: $$tool not installed (see libs.tech/gnucap/README.md)"; \
+	    exit 0; \
+	  fi; \
+	done; \
+	if [ -z "$$PDK_ROOT" ]; then \
+	  echo "Skipping: PDK_ROOT is not set (see libs.tech/gnucap/README.md)"; \
+	elif [ ! -d "$$PDK_ROOT/ihp-sg13cmos5l" ]; then \
+	  echo "Skipping: no ihp-sg13cmos5l under PDK_ROOT=$$PDK_ROOT"; \
+	  echo "  (the Ngspice suite reads its model cards from there)"; \
+	elif [ ! -d "$$PDK_ROOT/ihp-sg13g2" ]; then \
+	  echo "Skipping: no ihp-sg13g2 under PDK_ROOT=$$PDK_ROOT"; \
+	  echo "  (this directory is symlinked into it, see libs.tech/gnucap/README.md)"; \
+	elif [ ! -e "$$PDK_ROOT/ihp-sg13cmos5l/libs.tech/ngspice/osdi/psp103.osdi" ]; then \
+	  echo "Skipping: the OSDI objects are not built"; \
+	  echo "  cd \$$PDK_ROOT/ihp-sg13g2/libs.tech/verilog-a && ./openvaf-compile-va.sh"; \
+	  echo "  (they are a gitignored build product of the sibling PDK, so the"; \
+	  echo "   osdi/ symlinks here dangle until that runs, and the Ngspice half"; \
+	  echo "   would fail on its first test)"; \
+	elif [ ! -e "$$PDK_ROOT/ihp-sg13cmos5l/libs.tech/ngspice/osdi/cap_cmomi.osdi" ] || \
+	     [ ! -e "$$PDK_ROOT/ihp-sg13cmos5l/libs.tech/ngspice/models/cap_cmomi.lib" ] || \
+	     [ ! -e "$$PDK_ROOT/ihp-sg13cmos5l/libs.tech/ngspice/osdi/cap_cmomf.osdi" ] || \
+	     [ ! -e "$$PDK_ROOT/ihp-sg13cmos5l/libs.tech/ngspice/models/cap_cmomf.lib" ]; then \
+	  echo "Skipping: the installed ihp-sg13cmos5l predates the MoM capacitors"; \
+	  echo "  git -C \$$PDK_ROOT/ihp-sg13cmos5l pull"; \
+	  echo "  (unlike the OSDI above these two are tracked files, so a pull is the"; \
+	  echo "   fix rather than a build. The Ngspice capacitor test resolves them"; \
+	  echo "   through \$$PDK_ROOT/\$$PDK, i.e. the installed PDK and not this"; \
+	  echo "   working tree, so a checkout older than that merge fails on an"; \
+	  echo "   'Error opening osdi lib' that does not name the cause)"; \
+	else \
+	  echo "Running Gnucap regression for SG13CMOS5L devices"; \
+	  PDK=ihp-sg13cmos5l $(MAKE) -C libs.tech/gnucap check; \
+	fi
+
 #==========================
 # --------- HELP ----------
 #==========================
@@ -102,5 +170,8 @@ help:
 	@echo "... test-LVS-<device>          (Run LVS for specific device group             )"
 	@echo "... test-LVS-cells             (Run LVS for all standard cells                )"
 	@echo "... test-LVS-switch            (Run simple LVS switching test                 )"
+	@echo "... test-cap-cmomi-sweep       (Run cap_cmomi PCell DRC+LVS configuration sweep)"
+	@echo "... test-cap-cmomf-sweep       (Run cap_cmomf PCell DRC+LVS configuration sweep)"
+	@echo "... test-gnucap                (Build model plugins, run the device regression)"
 
-.PHONY: env lint lint_python test-DRC-main test-LVS-main test-LVS-cells test-LVS-switch help
+.PHONY: env lint lint_python test-DRC-main test-LVS-main test-LVS-cells test-LVS-switch test-cap-cmomi-sweep test-cap-cmomf-sweep test-gnucap help
