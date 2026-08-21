@@ -39,33 +39,33 @@ class via_stack(DloGen):
 #endif
 
         # SG13CMOS5L: M1-M4-TM1 stack (Metal5 removed, TopMetal1 as top layer)
-        specs('b_layer', 'Metal1', 'Bottom layer', ChoiceConstraint(['Activ','GatPoly','Metal1', 'Metal2', 'Metal3', 'Metal4', 'TopMetal1']))
-        specs('t_layer', 'Metal2', 'Top layer', ChoiceConstraint(['Metal1', 'Metal2', 'Metal3', 'Metal4', 'TopMetal1']))
+        specs('b_layer', 'Metal1', 'Bottom layer', ChoiceConstraint(['Activ','GatPoly','Metal1', 'Metal2', 'Metal3', 'Metal4', 'Metal5', 'TopMetal1']))
+        specs('t_layer', 'Metal2', 'Top layer', ChoiceConstraint(['Metal1', 'Metal2', 'Metal3', 'Metal4', 'Metal5', 'TopMetal1', 'TopMetal2']))
         specs('vn_columns', 2, 'Via_n Columns')
         specs('vn_rows', 2, 'Via_n Rows')
-        specs('extra_vias', 'no', 'Add extra vias', ChoiceConstraint(['yes', 'no']))
-        specs('use_array_size', 'no', 'Via count based on array size', ChoiceConstraint(['yes', 'no']))
+        specs('extra_vias', False, 'Add extra vias', BooleanConstraint())
+        ## UPDATE: Option to choose between row/col count vs width/hight for via array size
+        specs('use_array_size', False, 'Via count based on array size', BooleanConstraint())
         specs('vn_total_width',  '0.7u', 'Via array total width')
         specs('vn_total_height', '0.62u', 'Via array total height')
 
     def setupParams(self, params):
         # process parameter values entered by user
         self.params = params
+        self.extra_vias = params['extra_vias']
         self.b_layer = params['b_layer']
         self.t_layer = params['t_layer']
         self.vn_columns = params['vn_columns']
         self.vn_rows = params['vn_rows']
-        self.extra_vias = params['extra_vias'] == 'yes'
-        self.use_array_size = params['use_array_size'] == 'yes'
-        if self.use_array_size:
-            self.vn_total_width =Numeric(params['vn_total_width'])*1e6
-            self.vn_total_height = Numeric(params['vn_total_height'])*1e6  
-        else:
-            self.vn_total_width = 0
-            self.vn_total_height = 0      
+        if 'use_array_size' in params and params['use_array_size']:
+            self.vn_total_width = Numeric(params['vn_total_width'])*1e6
+            self.vn_total_height = Numeric(params['vn_total_height'])*1e6
     
     
     def genLayout(self):
+        
+        if not hasattr(self, 'origin'):
+            self.origin = 'centerCenter'
 
         b_layer = self.b_layer
         t_layer = self.t_layer
@@ -90,7 +90,7 @@ class via_stack(DloGen):
         #*
         #************************************************************************
 
-        epsilon = techparams['epsilon1']
+        epsilon = self.techparams['epsilon1']
         cont_size = self.techparams['Cnt_a']
         cont_enc1 = self.techparams['Cnt_c']
         cont_enc2 = self.techparams['M1_c1']
@@ -98,43 +98,51 @@ class via_stack(DloGen):
         cont_sep1 = self.techparams['Cnt_b']
         cont_sep2 = self.techparams['Cnt_b1']
 
-        v1_size = techparams['V1_a']
-        v1_sep1 = techparams['V1_b']
-        v1_sep2 = techparams['V1_b1']
-        v1_enc = techparams['V1_c1']
-        v1_enc1 = techparams['V1_c']
+        v1_size = self.techparams['V1_a']
+        v1_sep1 = self.techparams['V1_b']
+        v1_sep2 = self.techparams['V1_b1']
+        v1_enc = self.techparams['V1_c1']
+        v1_enc1 = self.techparams['V1_c']
 
-        vn_size = techparams['Vn_a']
-        vn_sep1 = techparams['Vn_b']
-        vn_sep2 = techparams['Vn_b1']
-        vn_enc = techparams['Vn_c1']
-        vn_enc1 = techparams['Vn_c']
+        vn_size = self.techparams['Vn_a']
+        vn_sep1 = self.techparams['Vn_b']
+        vn_sep2 = self.techparams['Vn_b1']
+        vn_enc = self.techparams['Vn_c1']
+        vn_enc1 = self.techparams['Vn_c']
+        
+        ## Rules for Metal_n
+        Mn_area = self.techparams.get('Mn_d', 0.144)
 
-        # TopVia1 parameters for M4-TM1 connection
+        # TopVia1 parameters for M5-TM1 connection
         # TopVia1 is larger than regular vias (0.42um vs 0.19um)
-        tv1_size = techparams.get('TV1_a', 0.42)  # TopVia1 size
-        tv1_sep = techparams.get('TV1_b', 0.42)   # TopVia1 spacing
-        tv1_enc = techparams.get('TV1_c', 0.10)   # Metal4 enclosure of TopVia1
-        tm1_enc = techparams.get('TV1_d', 0.42)   # TopMetal1 enclosure of TopVia1
-        tm1_min_width = techparams.get('TM1_a', 1.64)  # Minimum width of TopMetal1 when connecting to M4 with TopVia1
-        
-        
-        # Min metal area
-        mn_metal_area = techparams.get('Mn_d', 0.144)  # Minimum metal area (if applicable)
+        tv1_size = self.techparams.get('TV1_a', 0.42)  # TopVia1 size
+        tv1_sep = self.techparams.get('TV1_b', 0.42)   # TopVia1 spacing
+        tv1_enc = self.techparams.get('TV1_c', 0.10)   # Metal4 enclosure of TopVia1
+        tm1_enc = self.techparams.get('TV1_d', 0.42)   # TopMetal1 enclosure of TopVia1
+        tm1_width = self.techparams.get('TM1_a', 1.64)
+        # TopVia2
+        tv2_size = self.techparams.get('TV2_a', 0.42)  # TopVia1 size
+        tv2_sep = self.techparams.get('TV2_b', 0.42)   # TopVia1 spacing
+        tv2_enc = self.techparams.get('TV2_c', 0.10)   # Metal4 enclosure of TopVia1
+        tm2_enc = self.techparams.get('TV2_d', 0.42)   # TopMetal1 enclosure of TopVia1
+        tm2_width = self.techparams.get('TM2_a', 2.00)
         #*************************************************************************
         #*
         #* Device Specific Design Rule Definitions
         #*
         #************************************************************************
 
-        vn_columns = self.vn_columns
-        vn_rows = self.vn_rows
+        vn_columns = self.vn_columns 
+        vn_rows = self.vn_rows 
         vn_total_width = self.vn_total_width if hasattr(self, 'vn_total_width') else 0
         vn_total_height = self.vn_total_height if hasattr(self, 'vn_total_height') else 0
+        vn_total_height = vn_total_height * 1e-6 if vn_total_height > 20 else vn_total_height
+        vn_total_width = vn_total_width * 1e-6 if vn_total_width > 20 else vn_total_width
+        
 
         # SG13CMOS5L: M1-M4-TM1 metal stack (TopVia1 connects M4 to TopMetal1)
-        metal_layers = ['Metal1', 'Metal2', 'Metal3', 'Metal4', 'TopMetal1']
-        via_layers = ['Via1', 'Via2', 'Via3', 'TopVia1']
+        metal_layers = ['Metal1', 'Metal2', 'Metal3', 'Metal4', 'Metal5', 'TopMetal1', 'TopMetal2']
+        via_layers = ['Via1', 'Via2', 'Via3', 'Via4', 'TopVia1', 'TopVia2']
         
         #*************************************************************************
         #*
@@ -152,13 +160,18 @@ class via_stack(DloGen):
         stack_layers = metal_layers[idx_b:idx_t+1]
         def via_count_from_size(via_size, via_sep, via_total_size, via_num):
             ret = math.floor((via_total_size + via_sep)/(via_size + via_sep)) if via_total_size > 0 else via_num
-            return max(ret-1 if via_num == 0 else ret, 1)
+            self.fix_min_area = ret > 1
+            return max(ret, 1)
 
         if vn_total_width == 0 and self.extra_vias:
             via_size = vn_size
             via_sep = vn_sep2
             via_enc = vn_enc1
-            if t_layer == 'TopMetal1':
+            if t_layer == 'TopMetal2':
+                via_size = tv2_size
+                via_sep = tv2_sep
+                via_enc = tm2_enc
+            elif t_layer == 'TopMetal1':
                 via_size = tv1_size
                 via_sep = tv1_sep
                 via_enc = tm1_enc
@@ -168,6 +181,8 @@ class via_stack(DloGen):
                 via_enc = cont_enc2
             vn_total_width = (vn_columns * via_size + (vn_columns - 1) * via_sep) + via_enc
             vn_total_height = (vn_rows * via_size + (vn_rows - 1) * via_sep) + via_enc
+                
+                
         
         cont_cols_from_size = via_count_from_size(cont_size, cont_sep2, vn_total_width - cont_enc1*2, vn_columns)
         cont_rows_from_size = via_count_from_size(cont_size, cont_sep2, vn_total_height, vn_rows)
@@ -177,6 +192,16 @@ class via_stack(DloGen):
         vn_rows_from_size = via_count_from_size(vn_size, vn_sep2, vn_total_height, vn_rows)
         tv1_cols_from_size = via_count_from_size(tv1_size, tv1_sep, vn_total_width, vn_columns)
         tv1_rows_from_size = via_count_from_size(tv1_size, tv1_sep, vn_total_height, vn_rows)
+        tv2_cols_from_size = via_count_from_size(tv2_size, tv2_sep, vn_total_width, vn_columns)
+        tv2_rows_from_size = via_count_from_size(tv2_size, tv2_sep, vn_total_height, vn_rows)
+
+        # Pre-calculate maximum box dimensions for the origin offset logic
+        max_box_w = 0
+        max_box_h = 0
+        max_box = Box(0,0,0,0)
+        min_area = 0
+        min_width = 0
+        all_boxes = []
 
         for layer in stack_layers:
             via_enc1 = None
@@ -224,8 +249,18 @@ class via_stack(DloGen):
                 w_y = (rows * via_size + (rows - 1) * via_sep)
                 via_array_w_x = w_x
                 via_array_w_y = w_y
+            elif layer == 'TopMetal2':  # TopMetal1 uses TopVia1 (larger vias)
+                columns = tv2_cols_from_size
+                rows = tv2_rows_from_size
+                via_size = tv2_size
+                via_sep = tv2_sep
+                via_enc = tm2_enc  # TopMetal1 enclosure of TopVia1
+                w_x = (columns * via_size + (columns - 1) * via_sep)
+                w_y = (rows * via_size + (rows - 1) * via_sep)
+                via_array_w_x = w_x
+                via_array_w_y = w_y
 
-            elif layer == 'Metal4' and 'TopMetal1' in stack_layers:
+            elif layer == 'Metal5' and 'TopMetal1' in stack_layers:
                 # Metal4 connected to TopMetal1: M4 area must match TM1 area
                 columns = vn_cols_from_size
                 rows = vn_rows_from_size
@@ -254,27 +289,30 @@ class via_stack(DloGen):
             via_enc1 = via_enc if via_enc1 == None else via_enc1
             
             box_w = w_x/2 + via_enc 
-            box_h = w_y/2 + via_enc1 
+            box_h = w_y/2 + via_enc1
+            box_w = max(box_w, min_width/2)
+            box_h = max(box_h, min_width/2)
+            area = box_w * box_h
+            if area < min_area/4 and self.fix_min_area:
+                q_min_area = min_area/4
+                box_w = q_min_area/box_h + 0.005 if box_w < box_h else box_w
+                box_h = q_min_area/box_w + 0.005 if box_h < box_w else box_h
             if layer in ['Activ', 'GatPoly'] :
                 if vn_total_width != 0:
                     box_w = max(box_w, vn_total_width/2)
                 if vn_total_height != 0:
                     box_h = max(vn_total_height/2, box_h)
-            
-            if layer == 'TopMetal1':
-                box_w = max(box_w, tm1_min_width/2)  # Ensure minimum width for TopMetal1
-                box_h = max(box_h, tm1_min_width/2)  # Ensure minimum height for TopMetal1
-                
-            area = 4*box_w*box_h
-            if area < mn_metal_area:
-                max_dim = max(box_w, box_h)*2
-                new_dim = area/max_dim/2
-                box_w = new_dim + 0.005 if box_w <= box_h else box_w
-                box_h = new_dim + 0.005 if box_h < box_w else box_h
             box_w = GridFix(box_w)
             box_h = GridFix(box_h)
-    
+                
             metal_box = Box(-box_w + offset_x, -box_h + offset_y, box_w + offset_x, box_h + offset_y)
+            if box_w > max_box_w:
+                max_box = metal_box
+
+            if box_w > max_box_w: max_box_w = box_w
+            if box_h > max_box_h: max_box_h = box_h
+            all_boxes.append(metal_box)
+            
             
             #metal draw
             dbCreateRect(self, layer, metal_box)
@@ -298,4 +336,23 @@ class via_stack(DloGen):
                     x0 = i * via_sep + i * via_size - via_array_w_x/2 + offset_x
                     for j in range(rows):
                         y0 = j * via_sep + j * via_size - via_array_w_y/2 + offset_y
-                        dbCreateRect(self, via_layer, Box(x0, y0, x0 + via_size, y0 + via_size))
+                        via_box = Box(x0, y0, x0 + via_size, y0 + via_size)
+                        dbCreateRect(self, via_layer, via_box)
+                        all_boxes.append(via_box)
+        # Apply origin shifts based on the requested origin string
+        orig = self.origin.lower()
+        shift_x = 0
+        shift_y = 0
+        if 'left' in orig:
+            shift_x = max_box_w
+        elif 'right' in orig:
+            shift_x = -max_box_w
+            
+        if 'bottom' in orig:
+            shift_y = max_box_h
+        elif 'top' in orig:
+            shift_y = -max_box_h
+        if shift_x or shift_y:
+            for box in all_boxes:
+                box.moveBy(shift_x, shift_y)
+        return max_box
